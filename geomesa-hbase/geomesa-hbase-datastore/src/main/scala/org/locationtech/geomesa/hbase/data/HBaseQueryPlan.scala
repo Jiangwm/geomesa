@@ -10,12 +10,12 @@ package org.locationtech.geomesa.hbase.data
 
 import org.apache.hadoop.hbase.TableName
 import org.apache.hadoop.hbase.client._
-import org.apache.hadoop.hbase.filter.{FilterList, Filter => HBaseFilter}
+import org.apache.hadoop.hbase.filter.{FilterList, MultiRowRangeFilter, Filter => HBaseFilter}
 import org.locationtech.geomesa.hbase.utils.HBaseBatchScan
 import org.locationtech.geomesa.hbase.{HBaseFilterStrategyType, HBaseQueryPlanType}
 import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.utils.collection.{CloseableIterator, SelfClosingIterator}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.opengis.feature.simple.SimpleFeature
 
 sealed trait HBaseQueryPlan extends HBaseQueryPlanType {
   def filter: HBaseFilterStrategyType
@@ -78,5 +78,28 @@ case class GetPlan(filter: HBaseFilterStrategyType,
     ranges.foreach { range => range.setFilter(filterList) }
     val get = ds.connection.getTable(table)
     SelfClosingIterator(resultsToFeatures(get.get(ranges).iterator), get.close)
+  }
+}
+
+case class MultiRowRangeFilterScanPlan(filter: HBaseFilterStrategyType,
+                                       table: TableName,
+                                       mrrf: MultiRowRangeFilter,
+                                       remoteFilters: Seq[HBaseFilter] = Nil,
+                                       resultsToFeatures: Iterator[Result] => Iterator[SimpleFeature]) extends HBaseQueryPlan {
+
+  override def ranges: Seq[Query] = Nil
+
+  override def scan(ds: HBaseDataStore): CloseableIterator[SimpleFeature] = {
+    import scala.collection.JavaConversions._
+    val scan = new Scan()
+    val filterList = new FilterList(FilterList.Operator.MUST_PASS_ALL, mrrf)
+    remoteFilters.foreach { f => filterList.addFilter(f) }
+    scan.setFilter(mrrf)
+    val head = mrrf.getRowRanges.head
+    val last = mrrf.getRowRanges.last
+    scan.setStartRow(head.getStartRow)
+    scan.setStopRow(last.getStopRow)
+    val scanner = ds.connection.getTable(table).getScanner(scan)
+    SelfClosingIterator(resultsToFeatures(scanner.iterator), scanner.close)
   }
 }

@@ -9,8 +9,10 @@
 
 package org.locationtech.geomesa.hbase.index
 
+import com.google.common.collect.Lists
 import org.apache.hadoop.hbase.client._
-import org.apache.hadoop.hbase.filter.{KeyOnlyFilter, Filter => HBaseFilter}
+import org.apache.hadoop.hbase.filter.MultiRowRangeFilter.RowRange
+import org.apache.hadoop.hbase.filter.{KeyOnlyFilter, MultiRowRangeFilter, Filter => HBaseFilter}
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.hbase.{HColumnDescriptor, HTableDescriptor, TableName}
 import org.geotools.factory.Hints
@@ -122,6 +124,7 @@ trait HBaseFeatureIndex extends HBaseFeatureIndexType
       if (ranges.head.isInstanceOf[Get]) {
         GetPlan(filter, table, ranges.asInstanceOf[Seq[Get]], hbaseFilters, toFeatures)
       } else {
+/*
         // we want to ensure some parallelism in our batch scanning
         // as not all scans will take the same amount of time, we want to have multiple per-thread
         // since scans are executed by a thread pool, that should balance the work and keep all threads occupied
@@ -139,6 +142,15 @@ trait HBaseFeatureIndex extends HBaseFeatureIndexType
           }
           ScanPlan(filter, table, splitScans, hbaseFilters, toFeatures)
         }
+*/
+        val scans = ranges.asInstanceOf[Seq[Scan]]
+        val r = Lists.newArrayList[RowRange]()
+        scans.foreach { s =>
+          r.add(new RowRange(s.getStartRow, true, s.getStopRow, false))
+        }
+
+        val mrrf = new MultiRowRangeFilter(r)
+        MultiRowRangeFilterScanPlan(filter, table, mrrf, hbaseFilters, toFeatures)
       }
     }
   }
@@ -175,7 +187,6 @@ trait HBaseFeatureIndex extends HBaseFeatureIndexType
                            dedupe: Boolean,
                            remote: Boolean): ScanConfig = {
 
-    import HBaseFeatureIndex.{DataColumnFamily}
     import org.locationtech.geomesa.index.conf.QueryHints.RichHints
 
     /** This function is used to implement custom client filters for HBase **/
