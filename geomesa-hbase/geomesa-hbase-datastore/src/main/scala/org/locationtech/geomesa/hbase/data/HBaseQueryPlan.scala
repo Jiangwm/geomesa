@@ -94,7 +94,7 @@ case class MultiRowRangeFilterScanPlan(filter: HBaseFilterStrategyType,
     val scan = new Scan()
     val filterList = new FilterList(FilterList.Operator.MUST_PASS_ALL, mrrf)
     remoteFilters.foreach { f => filterList.addFilter(f) }
-    scan.setFilter(mrrf)
+    scan.setFilter(filterList)
     val head = mrrf.getRowRanges.head
     val last = mrrf.getRowRanges.last
     scan.setStartRow(head.getStartRow)
