@@ -8,6 +8,11 @@
 
 package org.locationtech.geomesa.hbase.filters;
 
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
+import org.apache.commons.pool.BaseKeyedPoolableObjectFactory;
+import org.apache.commons.pool.impl.GenericKeyedObjectPool;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.filter.FilterBase;
@@ -19,21 +24,43 @@ import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer;
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 
 public class JSimpleFeatureFilter extends FilterBase {
     private String sftString;
     private SimpleFeatureType sft;
-    private KryoFeatureSerializer serializer;
 
     private org.opengis.filter.Filter filter;
     private String filterString;
 
+    private static Logger log = LoggerFactory.getLogger(JSimpleFeatureFilter.class);
+
+    private static LoadingCache<String, SimpleFeatureType> sfts =
+            CacheBuilder.newBuilder().build(new CacheLoader<String, SimpleFeatureType>() {
+                @Override
+                public SimpleFeatureType load(String s) throws Exception {
+                    log.debug("Caching a new SFT: {}", s);
+                    return SimpleFeatureTypes.createType("", s);
+                }
+            });
+
+    private static GenericKeyedObjectPool<SimpleFeatureType, KryoFeatureSerializer> serializers =
+            new GenericKeyedObjectPool<>(new BaseKeyedPoolableObjectFactory<SimpleFeatureType, KryoFeatureSerializer>() {
+                @Override
+                public KryoFeatureSerializer makeObject(SimpleFeatureType key) throws Exception {
+                    log.debug("Getting access to a new KryoFeatureSerializer: {}", key);
+                    return new KryoFeatureSerializer(key, SerializationOptions.withoutId());
+                }
+            });
+
+
     public JSimpleFeatureFilter(String sftString, String filterString) {
+        log.debug("Instantiating new JSimpleFeatureFilter, sftString = {}, filterString = {}", sftString, filterString);
         this.sftString = sftString;
-        sft = SimpleFeatureTypes.createType("", sftString);
-        serializer = new KryoFeatureSerializer(sft, SerializationOptions.withoutId());
+        sft = sfts.getUnchecked(sftString);
 
         this.filterString = filterString;
         if (filterString != null && filterString != "") {
@@ -57,10 +84,26 @@ public class JSimpleFeatureFilter extends FilterBase {
         if (filter == null) {
             return ReturnCode.INCLUDE;
         } else {
-            SimpleFeature sf = serializer.deserialize(v.getValueArray(), v.getValueOffset(), v.getValueLength());
-            if (filter.evaluate(sf)) {
-                return ReturnCode.INCLUDE;
-            } else {
+            try {
+                KryoFeatureSerializer serializer = serializers.borrowObject(this.sft);
+                try {
+                    byte[] valueBytes = v.getValueArray();
+                    int valueOffset = v.getValueOffset();
+                    int valueLength = v.getValueLength();
+                    log.debug("valueBytes.length = {}, valueOffset = {}, valueLength = {}",
+                            valueBytes.length, valueOffset, valueLength);
+                    SimpleFeature sf = serializer.deserialize(valueBytes, valueOffset, valueLength);
+                    log.debug("Evaluating filter against SimpleFeature");
+                    if (filter.evaluate(sf)) {
+                        return ReturnCode.INCLUDE;
+                    } else {
+                        return ReturnCode.SKIP;
+                    }
+                } finally {
+                    serializers.returnObject(this.sft, serializer);
+                }
+            } catch(Exception e) {
+                log.error("Exception thrown while scanning, skipping entry", e);
                 return ReturnCode.SKIP;
             }
         }
