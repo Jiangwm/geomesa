@@ -94,7 +94,7 @@ case class MultiRowRangeFilterScanPlan(filter: HBaseFilterStrategyType,
   override def scan(ds: HBaseDataStore): CloseableIterator[SimpleFeature] = {
     import scala.collection.JavaConversions._
 
-    logger.debug("Setting up multipe range scans")
+    logger.trace("Setting up multipe range scans")
     val rowRanges = Lists.newArrayList[RowRange]()
     ranges.foreach { r =>
       rowRanges.add(new RowRange(r.getStartRow, true, r.getStopRow, false))
@@ -102,10 +102,13 @@ case class MultiRowRangeFilterScanPlan(filter: HBaseFilterStrategyType,
     val sortedRowRanges = MultiRowRangeFilter.sortAndMerge(rowRanges)
     val numRanges = sortedRowRanges.length
     val numThreads = ds.config.queryThreads
-    val rangesPerThread = math.ceil(numRanges/numThreads*2).toInt
+    // TODO: parameterize this?
+    val rangesPerThread = math.max(1,math.ceil(numRanges/numThreads*2).toInt)
+    // TODO: align partitions with region boundaries
     val groupedRanges = Lists.partition(sortedRowRanges, rangesPerThread)
 
     val groupedScans = groupedRanges.map { localRanges =>
+
       val mrrf = new MultiRowRangeFilter(localRanges)
       val filterList = new FilterList(FilterList.Operator.MUST_PASS_ALL, mrrf)
       remoteFilters.foreach { f => filterList.addFilter(f) }
@@ -118,7 +121,7 @@ case class MultiRowRangeFilterScanPlan(filter: HBaseFilterStrategyType,
       s.setCacheBlocks(true)
       s
     }
-    logger.debug("Starting scan")
+    logger.trace("Starting scan")
     val results = new HBaseBatchScan(ds.connection, table, groupedScans, ds.config.queryThreads, 100000, Nil)
     SelfClosingIterator(resultsToFeatures(results), results.close)
   }

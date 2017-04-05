@@ -121,6 +121,7 @@ trait HBaseFeatureIndex extends HBaseFeatureIndexType
       if (ranges.head.isInstanceOf[Get]) {
         GetPlan(filter, table, ranges.asInstanceOf[Seq[Get]], hbaseFilters, toFeatures)
       } else {
+        // TODO: Bigtable does not support MultiRowRangeFilter so conditionally set this
         MultiRowRangeFilterScanPlan(filter, table, ranges.asInstanceOf[Seq[Scan]], hbaseFilters, toFeatures)
       }
     }
