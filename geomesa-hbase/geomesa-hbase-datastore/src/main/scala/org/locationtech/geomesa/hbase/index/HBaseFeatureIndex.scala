@@ -9,10 +9,8 @@
 
 package org.locationtech.geomesa.hbase.index
 
-import com.google.common.collect.Lists
 import org.apache.hadoop.hbase.client._
-import org.apache.hadoop.hbase.filter.MultiRowRangeFilter.RowRange
-import org.apache.hadoop.hbase.filter.{KeyOnlyFilter, MultiRowRangeFilter, Filter => HBaseFilter}
+import org.apache.hadoop.hbase.filter.{KeyOnlyFilter, Filter => HBaseFilter}
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.hbase.{HColumnDescriptor, HTableDescriptor, TableName}
 import org.geotools.factory.Hints
@@ -123,33 +121,7 @@ trait HBaseFeatureIndex extends HBaseFeatureIndexType
       if (ranges.head.isInstanceOf[Get]) {
         GetPlan(filter, table, ranges.asInstanceOf[Seq[Get]], hbaseFilters, toFeatures)
       } else {
-/*
-        // we want to ensure some parallelism in our batch scanning
-        // as not all scans will take the same amount of time, we want to have multiple per-thread
-        // since scans are executed by a thread pool, that should balance the work and keep all threads occupied
-        val scansPerThread = 3
-        val scans = ranges.asInstanceOf[Seq[Scan]]
-        val minScans = if (ds.config.queryThreads == 1) { 1 } else { ds.config.queryThreads * scansPerThread }
-        if (scans.length >= minScans) {
-          ScanPlan(filter, table, scans, hbaseFilters, toFeatures)
-        } else {
-          // split up the scans so that we get some parallelism
-          val multiplier = math.ceil(minScans.toDouble / scans.length).toInt
-          val splitScans = scans.flatMap { scan =>
-            val splits = IndexAdapter.splitRange(scan.getStartRow, scan.getStopRow, multiplier)
-            splits.map { case (start, stop) => new Scan(scan).setStartRow(start).setStopRow(stop) }
-          }
-          ScanPlan(filter, table, splitScans, hbaseFilters, toFeatures)
-        }
-*/
-        val scans = ranges.asInstanceOf[Seq[Scan]]
-        val r = Lists.newArrayList[RowRange]()
-        scans.foreach { s =>
-          r.add(new RowRange(s.getStartRow, true, s.getStopRow, false))
-        }
-
-        val mrrf = new MultiRowRangeFilter(r)
-        MultiRowRangeFilterScanPlan(filter, table, mrrf, hbaseFilters, toFeatures)
+        MultiRowRangeFilterScanPlan(filter, table, ranges.asInstanceOf[Seq[Scan]], hbaseFilters, toFeatures)
       }
     }
   }
