@@ -152,6 +152,7 @@ object FilterHelper {
       case op: DWithin    => ff.dwithin(e1, e2, args.asInstanceOf[Double], "meters")
       // use the direct constructor so that we preserve our geom user data
       case op: BBOX       => new BBOXImpl(e1, e2)
+      case op: Contains   => ff.contains(e1, e2)
     }
   }
 
